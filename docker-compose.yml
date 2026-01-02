@@ -1,0 +1,39 @@
+services:
+  tg-archive:
+    build: .
+    image: tg-archive:latest
+    container_name: tg-archive
+    volumes:
+      # Persistent data directory containing config, database, session, and output
+      - ./data:/data
+    environment:
+      - TZ=UTC
+    # Interactive mode needed for first-time Telegram auth
+    stdin_open: true
+    tty: true
+    # Default: run sync then build
+    command: ["sh", "-c", "tg-archive --sync && tg-archive --build"]
+
+  # One-time setup service for Telegram authentication
+  tg-auth:
+    build: .
+    image: tg-archive:latest
+    container_name: tg-archive-auth
+    volumes:
+      - ./data:/data
+    stdin_open: true
+    tty: true
+    command: ["tg-archive", "--sync"]
+    profiles:
+      - auth
+
+  # Build-only service (no sync)
+  tg-build:
+    build: .
+    image: tg-archive:latest
+    container_name: tg-archive-build
+    volumes:
+      - ./data:/data
+    command: ["tg-archive", "--build"]
+    profiles:
+      - build
