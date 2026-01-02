@@ -45,10 +45,56 @@ _CONFIG = {
 }
 
 
-def get_config(path):
+def validate_path(path: str, name: str) -> str:
+    """Validate that a path doesn't contain path traversal sequences."""
+    if ".." in path:
+        raise ValueError(f"Path traversal detected in {name}: {path}")
+    if path.startswith("/"):
+        raise ValueError(f"Absolute paths not allowed for {name}: {path}")
+    return path
+
+
+def validate_config(config: dict, require_credentials: bool = False) -> None:
+    """Validate configuration values."""
+    # Validate required credentials for sync
+    if require_credentials:
+        if not config.get("api_id"):
+            raise ValueError("api_id is required. Set it in config.yaml or API_ID environment variable.")
+        if not config.get("api_hash"):
+            raise ValueError("api_hash is required. Set it in config.yaml or API_HASH environment variable.")
+        if not config.get("group"):
+            raise ValueError("group name/id is required in config.yaml")
+
+    # Validate path-related config values
+    path_keys = ["media_dir", "publish_dir", "static_dir"]
+    for key in path_keys:
+        if key in config and config[key]:
+            validate_path(config[key], key)
+
+    # Validate integer bounds
+    fetch_wait = config.get("fetch_wait", 5)
+    if not isinstance(fetch_wait, (int, float)) or fetch_wait < 0:
+        raise ValueError(f"fetch_wait must be a non-negative number, got: {fetch_wait}")
+    if fetch_wait > 3600:
+        logging.warning(f"fetch_wait is very high ({fetch_wait}s), this may cause long delays")
+
+    fetch_batch_size = config.get("fetch_batch_size", 2000)
+    if not isinstance(fetch_batch_size, int) or fetch_batch_size < 1:
+        raise ValueError(f"fetch_batch_size must be a positive integer, got: {fetch_batch_size}")
+    if fetch_batch_size > 10000:
+        logging.warning(f"fetch_batch_size is very high ({fetch_batch_size}), may cause memory issues")
+
+    per_page = config.get("per_page", 1000)
+    if not isinstance(per_page, int) or per_page < 1:
+        raise ValueError(f"per_page must be a positive integer, got: {per_page}")
+
+
+def get_config(path, require_credentials: bool = False):
     config = {}
     with open(path, "r") as f:
         config = {**_CONFIG, **yaml.safe_load(f.read())}
+
+    validate_config(config, require_credentials)
     return config
 
 
@@ -93,7 +139,7 @@ def main():
     args = p.parse_args(args=None if sys.argv[1:] else ['--help'])
 
     if args.version:
-        print("v{}".format(__version__))
+        print(f"v{__version__}")
         sys.exit()
 
     # Setup new site.
@@ -107,12 +153,13 @@ def main():
             shutil.copytree(exdir, args.path)
         except FileExistsError:
             logging.error(
-                "the directory '{}' already exists".format(args.path))
+                f"the directory '{args.path}' already exists")
             sys.exit(1)
-        except:
+        except (OSError, PermissionError) as e:
+            logging.error(f"failed to create directory: {e}")
             raise
 
-        logging.info("created directory '{}'".format(args.path))
+        logging.info(f"created directory '{args.path}'")
         
         # make sure the files are writable
         os.chmod(args.path, 0o755)
@@ -131,21 +178,21 @@ def main():
             logging.error("pass either --id or --from-id but not both")
             sys.exit(1)
 
-        cfg = get_config(args.config)
+        cfg = get_config(args.config, require_credentials=True)
         mode = "takeout" if cfg.get("use_takeout", False) else "standard"
 
-        logging.info("starting Telegram sync (batch_size={}, limit={}, wait={}, mode={})".format(
-            cfg["fetch_batch_size"], cfg["fetch_limit"], cfg["fetch_wait"], mode
-        ))
+        logging.info(f"starting Telegram sync (batch_size={cfg['fetch_batch_size']}, "
+                     f"limit={cfg['fetch_limit']}, wait={cfg['fetch_wait']}, mode={mode})")
         try:
             s = Sync(cfg, args.session, DB(args.data))
             s.sync(args.id, args.from_id)
-        except KeyboardInterrupt as e:
+        except KeyboardInterrupt:
             logging.info("sync cancelled manually")
             if cfg.get("use_takeout", False):
                 s.finish_takeout()
             sys.exit()
-        except:
+        except Exception as e:
+            logging.exception("sync failed")
             raise
 
     # Build static site.
@@ -160,4 +207,4 @@ def main():
             b.load_rss_template(args.rss_template)
         b.build()
 
-        logging.info("published to directory '{}'".format(config["publish_dir"]))
+        logging.info(f"published to directory '{config['publish_dir']}'")

@@ -3,9 +3,11 @@ from sys import exit
 import json
 import logging
 import os
+import stat
 import tempfile
 import shutil
 import time
+from typing import Iterator, List, Optional, Tuple
 
 from PIL import Image
 from telethon import TelegramClient, errors, sync
@@ -19,8 +21,6 @@ class Sync:
     Sync iterates and receives messages from the Telegram group to the
     local SQLite DB.
     """
-    config = {}
-    db = None
 
     def __init__(self, config, session_file, db):
         self.config = config
@@ -39,14 +39,13 @@ class Sync:
 
         if ids:
             last_id, last_date = (ids, None)
-            logging.info("fetching message id={}".format(ids))
+            logging.info(f"fetching message id={ids}")
         elif from_id:
             last_id, last_date = (from_id, None)
-            logging.info("fetching from last message id={}".format(last_id))
+            logging.info(f"fetching from last message id={last_id}")
         else:
             last_id, last_date = self.db.get_last_message_id()
-            logging.info("fetching from last message id={} ({})".format(
-                last_id, last_date))
+            logging.info(f"fetching from last message id={last_id} ({last_date})")
 
         group_id = self._get_group_id(self.config["group"])
 
@@ -72,7 +71,7 @@ class Sync:
                 last_date = m.date
                 n += 1
                 if n % 300 == 0:
-                    logging.info("fetched {} messages".format(n))
+                    logging.info(f"fetched {n} messages")
                     self.db.commit()
 
                 if 0 < self.config["fetch_limit"] <= n or ids:
@@ -82,8 +81,7 @@ class Sync:
             self.db.commit()
             if has:
                 last_id = m.id
-                logging.info("fetched {} messages. sleeping for {} seconds".format(
-                    n, self.config["fetch_wait"]))
+                logging.info(f"fetched {n} messages. sleeping for {self.config['fetch_wait']} seconds")
                 time.sleep(self.config["fetch_wait"])
             else:
                 break
@@ -92,7 +90,7 @@ class Sync:
         if self.config.get("use_takeout", False):
             self.finish_takeout()
         logging.info(
-            "finished. fetched {} messages. last message = {}".format(n, last_date))
+            f"finished. fetched {n} messages. last message = {last_date}")
 
     def new_client(self, session, config):
         if "proxy" in config and config["proxy"].get("enable"):
@@ -115,6 +113,12 @@ class Sync:
         client_logger.info = patched_info
 
         client.start()
+
+        # Enforce restrictive permissions on session file (contains auth tokens)
+        session_file = f"{session}.session"
+        if os.path.exists(session_file):
+            os.chmod(session_file, stat.S_IRUSR | stat.S_IWUSR)  # 0o600
+
         if config.get("use_takeout", False):
             for retry in range(3):
                 try:
@@ -125,23 +129,23 @@ class Sync:
                 except errors.TakeoutInitDelayError as e:
                     logging.info(
                         "please allow the data export request received from Telegram on your device. "
-                        "you can also wait for {} seconds.".format(e.seconds))
+                        f"you can also wait for {e.seconds} seconds.")
                     logging.info(
                         "press Enter key after allowing the data export request to continue..")
                     input()
-                    logging.info("trying again.. ({})".format(retry + 2))
+                    logging.info(f"trying again.. ({retry + 2})")
                 except errors.TakeoutInvalidError:
                     logging.info("takeout invalidated. delete the session.session file and try again.")
             else:
-                logging.info("could not initiate takeout.")
-                raise(Exception("could not initiate takeout."))
+                logging.error("could not initiate takeout after 3 attempts.")
+                raise Exception("could not initiate takeout.")
         else:
             return client
 
     def finish_takeout(self):
         self.client.__exit__(None, None, None)
 
-    def _get_messages(self, group, offset_id, ids=None) -> Message:
+    def _get_messages(self, group, offset_id, ids=None) -> Iterator[Message]:
         messages = self._fetch_messages(group, offset_id, ids)
         # https://docs.telethon.dev/en/latest/quick-references/objects-reference.html#message
         for m in messages:
@@ -186,7 +190,7 @@ class Sync:
                 media=med
             )
 
-    def _fetch_messages(self, group, offset_id, ids=None) -> Message:
+    def _fetch_messages(self, group, offset_id, ids=None):
         try:
             if self.config.get("use_takeout", False):
                 wait_time = 0
@@ -199,8 +203,9 @@ class Sync:
                                                 reverse=True)
             return messages
         except errors.FloodWaitError as e:
-            logging.info(
-                "flood waited: have to wait {} seconds".format(e.seconds))
+            logging.warning(
+                f"flood wait error: must wait {e.seconds} seconds. Returning empty batch.")
+            return []
 
     def _get_user(self, u, chat) -> User:
         tags = []
@@ -300,10 +305,10 @@ class Sync:
                     if hasattr(msg, "file") and hasattr(msg.file, "mime_type") and msg.file.mime_type:
                         if msg.file.mime_type not in self.config["media_mime_types"]:
                             logging.info(
-                                "skipping media #{} / {}".format(msg.file.name, msg.file.mime_type))
+                                f"skipping media #{msg.file.name} / {msg.file.mime_type}")
                             return
 
-                logging.info("downloading media #{}".format(msg.id))
+                logging.info(f"downloading media #{msg.id}")
                 try:
                     basename, fname, thumb = self._download_media(msg)
                     return Media(
@@ -314,11 +319,10 @@ class Sync:
                         description=None,
                         thumb=thumb
                     )
-                except Exception as e:
-                    logging.error(
-                        "error downloading media: #{}: {}".format(msg.id, e))
+                except Exception:
+                    logging.exception(f"error downloading media #{msg.id}")
 
-    def _download_media(self, msg) -> [str, str, str]:
+    def _download_media(self, msg) -> Tuple[str, str, Optional[str]]:
         """
         Download a media / file attached to a message and return its original
         filename, sanitized name on disk, and the thumbnail (if any). 
@@ -329,7 +333,7 @@ class Sync:
         fpath = self.client.download_media(msg, file=tempfile.gettempdir())
         basename = os.path.basename(fpath)
 
-        newname = "{}.{}".format(msg.id, self._get_file_ext(basename))
+        newname = f"{msg.id}.{self._get_file_ext(basename)}"
         shutil.move(fpath, os.path.join(self.config["media_dir"], newname))
 
         # If it's a photo, download the thumbnail.
@@ -337,8 +341,7 @@ class Sync:
         if isinstance(msg.media, telethon.tl.types.MessageMediaPhoto):
             tpath = self.client.download_media(
                 msg, file=tempfile.gettempdir(), thumb=1)
-            tname = "thumb_{}.{}".format(
-                msg.id, self._get_file_ext(os.path.basename(tpath)))
+            tname = f"thumb_{msg.id}.{self._get_file_ext(os.path.basename(tpath))}"
             shutil.move(tpath, os.path.join(self.config["media_dir"], tname))
 
         return basename, newname, tname
@@ -352,19 +355,19 @@ class Sync:
         return ".file"
 
     def _download_avatar(self, user):
-        fname = "avatar_{}.jpg".format(user.id)
+        fname = f"avatar_{user.id}.jpg"
         fpath = os.path.join(self.config["media_dir"], fname)
 
         if os.path.exists(fpath):
             return fname
 
-        logging.info("downloading avatar #{}".format(user.id))
+        logging.info(f"downloading avatar #{user.id}")
 
         # Download the file into a container, resize it, and then write to disk.
         b = BytesIO()
         profile_photo = self.client.download_profile_photo(user, file=b)
         if profile_photo is None:
-            logging.info("user has no avatar #{}".format(user.id))
+            logging.info(f"user has no avatar #{user.id}")
             return None
 
         im = Image.open(b)
@@ -396,8 +399,8 @@ class Sync:
         try:
             entity = self.client.get_entity(group)
         except ValueError:
-            logging.critical("the group: {} does not exist,"
-                             " or the authorized user is not a participant!".format(group))
+            logging.critical(f"the group: {group} does not exist,"
+                             " or the authorized user is not a participant!")
             # This is a critical error, so exit with code: 1
             exit(1)
 
@@ -409,7 +412,6 @@ class Sync:
             try:
                 fname = self._download_avatar(entity)
                 avatar = fname
-            except Exception as e:
-                logging.error(
-                    "error downloading avatar: #{}: {}".format(entity.id, e))
+            except Exception:
+                logging.exception(f"error downloading avatar #{entity.id}")
         return avatar

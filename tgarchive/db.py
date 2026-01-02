@@ -2,10 +2,10 @@ import json
 import math
 import os
 import sqlite3
-from collections import namedtuple
+from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any, Iterator, List, Optional, Tuple, Union
 import pytz
-from typing import Iterator
 
 schema = """
 CREATE table messages (
@@ -40,18 +40,58 @@ CREATE table media (
 );
 """
 
-User = namedtuple(
-    "User", ["id", "username", "first_name", "last_name", "tags", "avatar"])
+@dataclass
+class User:
+    id: int
+    username: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    tags: Union[str, List[str]] = ""
+    avatar: Optional[str] = None
 
-Message = namedtuple(
-    "Message", ["id", "type", "date", "edit_date", "content", "reply_to", "user", "media"])
+    def display_name(self) -> str:
+        """Return a display name for the user."""
+        name = f"{self.first_name or ''} {self.last_name or ''}".strip()
+        return name or self.username
 
-Media = namedtuple(
-    "Media", ["id", "type", "url", "title", "description", "thumb"])
 
-Month = namedtuple("Month", ["date", "slug", "label", "count"])
+@dataclass
+class Media:
+    id: int
+    type: str
+    url: Optional[str] = None
+    title: Optional[str] = None
+    description: Union[str, List[dict], None] = None
+    thumb: Optional[str] = None
 
-Day = namedtuple("Day", ["date", "slug", "label", "count", "page"])
+
+@dataclass
+class Message:
+    id: int
+    type: str
+    date: datetime
+    edit_date: Optional[datetime] = None
+    content: Optional[str] = None
+    reply_to: Optional[int] = None
+    user: Optional[User] = None
+    media: Optional[Media] = None
+
+
+@dataclass
+class Month:
+    date: datetime
+    slug: str
+    label: str
+    count: int
+
+
+@dataclass
+class Day:
+    date: datetime
+    slug: str
+    label: str
+    count: int
+    page: int
 
 
 def _page(n, multiple):
@@ -59,9 +99,6 @@ def _page(n, multiple):
 
 
 class DB:
-    conn = None
-    tz = None
-
     def __init__(self, dbfile, tz=None):
         # Initialize the SQLite DB. If it's new, create the table schema.
         is_new = not os.path.isfile(dbfile)
@@ -73,18 +110,29 @@ class DB:
         # by its row number and a limit multiple.
         self.conn.create_function("PAGE", 2, _page)
 
-        if tz:
-            self.tz = pytz.timezone(tz)
+        self.tz = pytz.timezone(tz) if tz else None
 
         if is_new:
             for s in schema.split("##"):
                 self.conn.cursor().execute(s)
                 self.conn.commit()
 
+    def close(self):
+        """Close the database connection."""
+        if self.conn:
+            self.conn.close()
+            self.conn = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
     def _parse_date(self, d) -> str:
         return datetime.strptime(d, "%Y-%m-%dT%H:%M:%S%z")
 
-    def get_last_message_id(self) -> [int, datetime]:
+    def get_last_message_id(self) -> Tuple[int, Optional[datetime]]:
         cur = self.conn.cursor()
         cur.execute("""
             SELECT id, strftime('%Y-%m-%d 00:00:00', date) as "[timestamp]" FROM messages

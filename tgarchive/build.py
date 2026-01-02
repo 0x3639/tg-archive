@@ -2,7 +2,8 @@ from collections import OrderedDict, deque
 import logging
 import math
 import os
-import pkg_resources
+import sys
+from importlib.metadata import version
 import re
 import shutil
 import magic
@@ -17,15 +18,12 @@ _NL2BR = re.compile(r"\n\n+")
 
 
 class Build:
-    config = {}
-    template = None
-    db = None
-
     def __init__(self, config, db, symlink):
         self.config = config
         self.db = db
         self.symlink = symlink
 
+        self.template: Template = None
         self.rss_template: Template = None
 
         # Map of all message IDs across all months and the slug of the page
@@ -41,7 +39,7 @@ class Build:
         timeline = list(self.db.get_timeline())
         if len(timeline) == 0:
             logging.info("no data found to publish site")
-            quit()
+            sys.exit()
 
         for month in timeline:
             if month.date.year not in self.timeline:
@@ -108,8 +106,7 @@ class Build:
             self.rss_template = Template(f.read(), autoescape=True)
 
     def make_filename(self, month, page) -> str:
-        fname = "{}{}.html".format(
-            month.slug, "_" + str(page) if page > 1 else "")
+        fname = f"{month.slug}{'_' + str(page) if page > 1 else ''}.html"
         return fname
 
     def _render_page(self, messages, month, dayline, fname, page, total_pages):
@@ -131,25 +128,27 @@ class Build:
         f = FeedGenerator()
         f.id(self.config["site_url"])
         f.generator(
-            "tg-archive {}".format(pkg_resources.get_distribution("tg-archive").version))
+            f"tg-archive {version('tg-archive')}")
         f.link(href=self.config["site_url"], rel="alternate")
         f.title(self.config["site_name"].format(group=self.config["group"]))
         f.subtitle(self.config["site_description"])
 
         for m in messages:
-            url = "{}/{}#{}".format(self.config["site_url"],
-                                    self.page_ids[m.id], m.id)
+            url = f"{self.config['site_url']}/{self.page_ids[m.id]}#{m.id}"
             e = f.add_entry()
             e.id(url)
-            e.title("@{} on {} (#{})".format(m.user.username, m.date, m.id))
+            e.title(f"@{m.user.username} on {m.date} (#{m.id})")
             e.link({"href": url})
             e.published(m.date)
 
             media_mime = ""
             if m.media and m.media.url:
-                murl = "{}/{}/{}".format(self.config["site_url"],
-                                         os.path.basename(self.config["media_dir"]), m.media.url)
-                media_path = "{}/{}".format(self.config["media_dir"], m.media.url)
+                # Validate media URL to prevent path traversal
+                if ".." in m.media.url or m.media.url.startswith("/"):
+                    logging.warning(f"skipping invalid media URL: {m.media.url}")
+                    continue
+                murl = f"{self.config['site_url']}/{os.path.basename(self.config['media_dir'])}/{m.media.url}"
+                media_path = f"{self.config['media_dir']}/{m.media.url}"
                 media_mime = "application/octet-stream"
                 media_size = 0
 
@@ -160,8 +159,8 @@ class Build:
                         media_size = str(os.path.getsize(media_path))
                         try:
                             media_mime = magic.from_file(media_path, mime=True)
-                        except:
-                            pass
+                        except (OSError, TypeError, ValueError) as e:
+                            logging.debug(f"could not determine MIME type for {media_path}: {e}")
                     except FileNotFoundError:
                         pass
 
