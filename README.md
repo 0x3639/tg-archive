@@ -47,4 +47,99 @@ Edit the generated `template.html` and static assets in the `./static` directory
 - Setup a cron job to periodically sync messages and re-publish the archive.
 - Downloading large media files and long message history from large groups continuously may run into Telegram API's rate limits. Watch the debug output.
 
+## Docker / Portainer Deployment
+
+This project includes Docker support with automatic scheduling via [Ofelia](https://github.com/mcuadros/ofelia).
+
+### Prerequisites
+- Docker and Docker Compose installed
+- [Telegram API credentials](https://my.telegram.org/auth?to=apps)
+
+### Step 1: Prepare Configuration
+
+1. Clone or download this repository
+2. Create a `data` directory and add your `config.yaml`:
+
+```bash
+mkdir -p data
+tg-archive --new --path=data
+```
+
+3. Edit `data/config.yaml` with your Telegram API credentials and group settings
+
+### Step 2: Authenticate with Telegram
+
+First-time setup requires interactive authentication:
+
+```bash
+docker-compose --profile auth run --rm tg-auth
+```
+
+This will prompt for your phone number and Telegram auth code. Once authenticated, a `session.session` file is created in the `data` directory.
+
+### Step 3: Deploy to Portainer
+
+#### Option A: Using Portainer Stacks (Recommended)
+
+1. In Portainer, go to **Stacks** → **Add stack**
+2. Name your stack (e.g., `tg-archive`)
+3. Choose **Repository** or **Upload** and provide the `docker-compose.yml`
+4. If using Repository:
+   - Repository URL: Your git repo URL
+   - Compose path: `docker-compose.yml`
+5. Click **Deploy the stack**
+
+#### Option B: Using docker-compose directly
+
+```bash
+docker-compose up -d
+```
+
+### How Scheduling Works
+
+The `docker-compose.yml` includes:
+
+- **ofelia**: A job scheduler that runs inside Docker
+- **tg-archive**: The main container that stays running
+
+Ofelia executes `tg-archive --sync && tg-archive --build` every minute with these safeguards:
+
+- **no-overlap**: If a sync/build is still running, the next scheduled run is skipped
+- Jobs run inside the existing tg-archive container (no new containers spawned)
+
+### Viewing Logs
+
+```bash
+# View Ofelia scheduler logs (shows when jobs run/skip)
+docker logs -f ofelia
+
+# View tg-archive sync/build output
+docker logs -f tg-archive
+```
+
+### Changing the Schedule
+
+Edit the cron schedule in `docker-compose.yml`:
+
+```yaml
+labels:
+  ofelia.job-exec.sync.schedule: "* * * * *"  # Every minute
+  # ofelia.job-exec.sync.schedule: "0 */6 * * *"  # Every 6 hours
+  # ofelia.job-exec.sync.schedule: "0 0 * * *"    # Daily at midnight
+```
+
+After changing, redeploy the stack in Portainer or run:
+
+```bash
+docker-compose up -d
+```
+
+### Accessing the Generated Site
+
+The static site is generated in `data/site/`. You can:
+
+- Serve it with any web server (nginx, Apache, etc.)
+- Add an nginx container to the docker-compose.yml
+- Copy files to your web hosting
+
 Licensed under the MIT license.

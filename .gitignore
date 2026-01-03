@@ -1,5 +1,11 @@
 # https://github.com/github/gitignore/blob/main/Python.gitignore
 
+# Docker data directory (contains config, session, database, media)
+data/
+
+# Telegram session files (sensitive - contains auth tokens)
+*.session
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
