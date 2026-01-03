@@ -1,3 +1,7 @@
+volumes:
+  tg-archive-data:
+    external: true
+
 services:
   # Scheduler for automated sync/build
   ofelia:
@@ -15,7 +19,7 @@ services:
     container_name: tg-archive
     volumes:
       # Persistent data directory containing config, database, session, and output
-      - ./data:/data
+      - tg-archive-data:/data
     environment:
       - TZ=UTC
     # Interactive mode needed for first-time Telegram auth
@@ -40,7 +44,7 @@ services:
     image: tg-archive:latest
     container_name: tg-archive-auth
     volumes:
-      - ./data:/data
+      - tg-archive-data:/data
     stdin_open: true
     tty: true
     command: ["tg-archive", "--sync"]
@@ -53,7 +57,7 @@ services:
     image: tg-archive:latest
     container_name: tg-archive-build
     volumes:
-      - ./data:/data
+      - tg-archive-data:/data
     command: ["tg-archive", "--build"]
     profiles:
       - build
