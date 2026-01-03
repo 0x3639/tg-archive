@@ -25,9 +25,14 @@ services:
     command: ["tail", "-f", "/dev/null"]
     labels:
       ofelia.enabled: "true"
+      # Sync every minute
       ofelia.job-exec.sync.schedule: "* * * * *"
-      ofelia.job-exec.sync.command: "sh -c 'tg-archive --sync && tg-archive --build'"
+      ofelia.job-exec.sync.command: "tg-archive --sync"
       ofelia.job-exec.sync.no-overlap: "true"
+      # Build once daily at midnight
+      ofelia.job-exec.build.schedule: "0 0 * * *"
+      ofelia.job-exec.build.command: "tg-archive --build"
+      ofelia.job-exec.build.no-overlap: "true"
 
   # One-time setup service for Telegram authentication
   tg-auth:

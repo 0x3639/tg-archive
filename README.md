@@ -102,10 +102,12 @@ The `docker-compose.yml` includes:
 - **ofelia**: A job scheduler that runs inside Docker
 - **tg-archive**: The main container that stays running
 
-Ofelia executes `tg-archive --sync && tg-archive --build` every minute with these safeguards:
+Ofelia runs two separate jobs:
 
-- **no-overlap**: If a sync/build is still running, the next scheduled run is skipped
-- Jobs run inside the existing tg-archive container (no new containers spawned)
+- **sync**: Runs `tg-archive --sync` every minute
+- **build**: Runs `tg-archive --build` once daily at midnight (UTC)
+
+Both jobs have **no-overlap** protection - if a job is still running, the next scheduled run is skipped.
 
 ### Viewing Logs
 
@@ -119,13 +121,17 @@ docker logs -f tg-archive
 
 ### Changing the Schedule
 
-Edit the cron schedule in `docker-compose.yml`:
+Edit the cron schedules in `docker-compose.yml`:
 
 ```yaml
 labels:
-  ofelia.job-exec.sync.schedule: "* * * * *"  # Every minute
-  # ofelia.job-exec.sync.schedule: "0 */6 * * *"  # Every 6 hours
-  # ofelia.job-exec.sync.schedule: "0 0 * * *"    # Daily at midnight
+  # Sync schedule
+  ofelia.job-exec.sync.schedule: "* * * * *"      # Every minute
+  # ofelia.job-exec.sync.schedule: "*/5 * * * *"  # Every 5 minutes
+
+  # Build schedule
+  ofelia.job-exec.build.schedule: "0 0 * * *"     # Daily at midnight
+  # ofelia.job-exec.build.schedule: "0 */6 * * *" # Every 6 hours
 ```
 
 After changing, redeploy the stack in Portainer or run:
