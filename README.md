@@ -121,17 +121,21 @@ docker logs -f tg-archive
 
 ### Changing the Schedule
 
-Edit the cron schedules in `docker-compose.yml`:
+Edit the cron schedules in `docker-compose.yml`. Note: Ofelia uses 6-field cron format (with seconds):
+
+```
+second minute hour day month weekday
+```
 
 ```yaml
 labels:
   # Sync schedule
-  ofelia.job-exec.sync.schedule: "* * * * *"      # Every minute
-  # ofelia.job-exec.sync.schedule: "*/5 * * * *"  # Every 5 minutes
+  ofelia.job-exec.sync.schedule: "0 * * * * *"       # Every minute
+  # ofelia.job-exec.sync.schedule: "0 */5 * * * *"   # Every 5 minutes
 
   # Build schedule
-  ofelia.job-exec.build.schedule: "0 0 * * *"     # Daily at midnight
-  # ofelia.job-exec.build.schedule: "0 */6 * * *" # Every 6 hours
+  ofelia.job-exec.build.schedule: "0 0 0 * * *"      # Daily at midnight
+  # ofelia.job-exec.build.schedule: "0 0 */6 * * *"  # Every 6 hours
 ```
 
 After changing, redeploy the stack in Portainer or run:
