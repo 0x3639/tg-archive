@@ -28,5 +28,5 @@ setuptools>=76.0.0
 	# via -r requirements.txt
 six==1.17.0
     # via python-dateutil
-telethon==1.39.0
-    # via -r requirements.txt
+telethon @ git+https://github.com/LonamiWebs/Telethon@v1
+    # via -r requirements.txt (using latest git for layer 221 schema)

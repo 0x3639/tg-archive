@@ -1,10 +1,11 @@
 FROM python:3.13-slim
 
-# Install system dependencies for python-magic and pillow
+# Install system dependencies for python-magic, pillow, and git for pip install
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libmagic1 \
     libjpeg62-turbo \
     zlib1g \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
